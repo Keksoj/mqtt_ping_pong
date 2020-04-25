@@ -37,7 +37,7 @@ if let Some((server_uri, ver, session_present)) = rsp.connect_response() { ... }
 
 I couldn't find this `connect_response()` function anywhere in the library.
 
-## How to run
+## Run the synchronous ping-pong
 
 Open *two* terminals in the project directory, and run *separately*:
 
@@ -53,6 +53,21 @@ cargo run --bin sync_ping
 
 Be sure to launch `sync_pong` first, otherwise it won't catch the single message that
 `sync_ping` sends immediatly when starting.
+
+## Run the synchronous ping-pong
+
+Same with
+
+```
+cargo run --bin async_pong
+```
+
+and
+
+```
+cargo run --bin async_ping
+```
+
 
 ### Why the huge ASCII text as comments in the code?
 
