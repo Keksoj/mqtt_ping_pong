@@ -1,6 +1,7 @@
 use paho_mqtt as mqtt;
 use std::time::Duration;
 use std::{process, thread};
+mod variables;
 
 fn main() {
     //                       _         _   _                 _ _            _
@@ -9,7 +10,7 @@ fn main() {
     //  | (__| | |  __/ (_| | ||  __/ | |_| | | |  __/ | (__| | |  __/ | | | |_
     //   \___|_|  \___|\__,_|\__\___|  \__|_| |_|\___|  \___|_|_|\___|_| |_|\__|
     //
-    let host: String = "test.mosquitto.org:1883".to_string();
+    let host: String = variables::HOST.to_string();
 
     let create_options = mqtt::CreateOptionsBuilder::new()
         .server_uri(&host)
@@ -54,8 +55,7 @@ fn main() {
             if !session_present {
                 println!(
                     "Subscribing to the topics {:?} with QoS {:?}...",
-                    &subscribed_topics,
-                    &qualities_of_service
+                    &subscribed_topics, &qualities_of_service
                 );
 
                 match client.subscribe_many(&subscribed_topics, &qualities_of_service) {

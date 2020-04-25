@@ -1,0 +1,1 @@
+pub const HOST: &'static str = "test.mosquitto.org:1883";
