@@ -1,8 +1,8 @@
 use futures::Future;
 use paho_mqtt as mqtt;
 mod variables;
-// use std::time::Duration;
-// use std::{process, thread};
+use std::thread;
+use std::time::Duration;
 
 fn main() {
     //                       _         _   _                 _ _            _
@@ -19,23 +19,37 @@ fn main() {
         .persistence(mqtt::PersistenceType::None)
         .finalize();
 
-    let client = match mqtt::AsyncClient::new(create_options) {
+    let mut client = match mqtt::AsyncClient::new(create_options) {
         Ok(client) => client,
         Err(error) => panic!("error creating the client: {:?}", error),
     };
 
+    client.set_connection_lost_callback(initiate_reconnection);
+
+    client.set_message_callback(handle_messages);
     //                                   _
     //    ___ ___  _ __  _ __   ___  ___| |_
     //   / __/ _ \| '_ \| '_ \ / _ \/ __| __|
     //  | (_| (_) | | | | | | |  __/ (__| |_
     //   \___\___/|_| |_|_| |_|\___|\___|\__|
-    // default connecting options
-    let connection_options = mqtt::ConnectOptions::new();
-    //
-    let connection_token = client.connect(connection_options);
-    if let Err(error) = connection_token.wait() {
-        panic!("Couldn't connect the client: {}", error);
-    }
+    let last_will_and_testament = mqtt::MessageBuilder::new()
+        .topic("pong-response")
+        .payload("the asynchronized ponger lost connection")
+        .finalize();
+
+    let connect_options = mqtt::ConnectOptionsBuilder::new()
+        .keep_alive_interval(Duration::from_secs(20))
+        .mqtt_version(mqtt::MQTT_VERSION_3_1_1)
+        .will_message(last_will_and_testament)
+        .clean_session(true)
+        .finalize();
+
+    println!("connecting to the broker {}", &host);
+    client.connect_with_callbacks(connect_options, connect_success_cb, connect_failure_cb);
+
+    // wait for a few seconds before pinging, because I'm a noob
+    // todo: handle this more gracefully, asynchronously
+    thread::sleep(Duration::from_secs(3));
 
     //         _             _
     //   _ __ (_)_ __   __ _(_)_ __   __ _
@@ -54,11 +68,54 @@ fn main() {
         Ok(()) => println!("successfully pinged!"),
         Err(error) => println!("Error while pinging: {}", error),
     }
-    //       _ _                                     _
-    //    __| (_)___  ___ ___  _ __  _ __   ___  ___| |_
-    //   / _` | / __|/ __/ _ \| '_ \| '_ \ / _ \/ __| __|
-    //  | (_| | \__ \ (_| (_) | | | | | | |  __/ (__| |_
-    //   \__,_|_|___/\___\___/|_| |_|_| |_|\___|\___|\__|
-    let disconnection_token = client.disconnect(None);
-    disconnection_token.wait().unwrap();
+
+    // wait for incoming messages
+    loop {
+        thread::sleep(Duration::from_millis(1000));
+    }
+}
+
+//             _ _ _                _
+//    ___ __ _| | | |__   __ _  ___| | _____
+//   / __/ _` | | | '_ \ / _` |/ __| |/ / __|
+//  | (_| (_| | | | |_) | (_| | (__|   <\__ \
+//   \___\__,_|_|_|_.__/ \__,_|\___|_|\_\___/
+
+const TOPIC: &str = "pong-response";
+const QUALITY_OF_SERVICE: i32 = 2;
+
+fn initiate_reconnection(client: &mqtt::AsyncClient) {
+    println!("Connection lost. Attempting to reconnect");
+    thread::sleep(Duration::from_millis(2500));
+    client.reconnect_with_callbacks(connect_success_cb, connect_failure_cb);
+}
+
+fn connect_success_cb(client: &mqtt::AsyncClient, _message_id: u16) {
+    println!("Connection succeeded");
+    // subscribe to the desired topics
+    client.subscribe(TOPIC, QUALITY_OF_SERVICE);
+    println!("Subscribing to topics: {:?}", TOPIC);
+}
+
+// this is a sleep & retry that calls itself recursively
+fn connect_failure_cb(client: &mqtt::AsyncClient, _message_id: u16, return_code: i32) {
+    println!(
+        "Connection attempt failed with return code {}.\n",
+        return_code
+    );
+    thread::sleep(Duration::from_millis(2500));
+    client.reconnect_with_callbacks(connect_success_cb, connect_failure_cb);
+}
+
+fn handle_messages(_client: &mqtt::AsyncClient, wrapped_message: Option<mqtt::Message>) {
+    let message = wrapped_message.unwrap();
+    let payload_string: &str = match std::str::from_utf8(message.payload()) {
+        Ok(str) => str,
+        Err(error) => panic!("Couldn't unpack the message payload: {}", error),
+    };
+    println!("{}", payload_string);
+    match payload_string {
+        "pong" => println!("We received the pong!"),
+        _ => println!("That wasn't a pong..."),
+    }
 }

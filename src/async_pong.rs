@@ -2,6 +2,7 @@ use paho_mqtt as mqtt;
 use std::thread;
 use std::time::Duration;
 mod variables;
+use futures::Future;
 
 fn main() {
     //                       _         _   _                 _ _            _
@@ -34,7 +35,7 @@ fn main() {
 
     let last_will_and_testament = mqtt::MessageBuilder::new()
         .topic("pong-response")
-        .payload("the synchronized ponger lost connection")
+        .payload("the asynchronized ponger lost connection")
         .finalize();
 
     let connect_options = mqtt::ConnectOptionsBuilder::new()
@@ -76,10 +77,10 @@ fn connect_success_cb(client: &mqtt::AsyncClient, _message_id: u16) {
 }
 
 // this is a sleep & retry that calls itself recursively
-fn connect_failure_cb(client: &mqtt::AsyncClient, _message_id: u16, error_code: i32) {
+fn connect_failure_cb(client: &mqtt::AsyncClient, _message_id: u16, return_code: i32) {
     println!(
-        "Connection attempt failed with error code {}.\n",
-        error_code
+        "Connection attempt failed with return code {}.\n",
+        return_code
     );
     thread::sleep(Duration::from_millis(2500));
     client.reconnect_with_callbacks(connect_success_cb, connect_failure_cb);
@@ -88,12 +89,27 @@ fn connect_failure_cb(client: &mqtt::AsyncClient, _message_id: u16, error_code: 
 fn handle_messages(client: &mqtt::AsyncClient, wrapped_message: Option<mqtt::Message>) {
     match wrapped_message {
         Some(message) => {
-            let topic = message.topic();
-            let payload_str = message.payload_str();
-            println!(
-                "On the topic '{}', we received this message: '{}' ",
-                topic, payload_str
-            );
+            // let topic = message.topic();
+            // the payload is of type &[u8] so...
+            let payload_string: &str = match std::str::from_utf8(message.payload()) {
+                Ok(str) => str,
+                Err(error) => panic!("Couldn't unpack the message payload: {}", error),
+            };
+            match payload_string {
+                "ping" => {
+                    println!("{}\nWe received a ping! Let's pong back!", payload_string);
+                    // publish_pong(client);
+                    let pong_message = mqtt::MessageBuilder::new()
+                        .topic("pong-response")
+                        .payload("pong")
+                        .qos(2)
+                        .finalize();
+
+                    // todo: handle the delivery token returned by this publish function
+                    client.publish(pong_message);
+                }
+                _ => println!("{}\nThat wasn't a ping...", payload_string),
+            }
         }
         None => println!("Well.... nothing"),
     }

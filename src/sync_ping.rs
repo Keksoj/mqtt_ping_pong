@@ -23,8 +23,7 @@ fn main() {
     };
 
     println!("I am the synchronous ping program.");
-    // 5 secs timeouts for synchronous calls
-    client.set_timeout(Duration::from_secs(5));
+   
 
     //                                   _
     //    ___ ___  _ __  _ __   ___  ___| |_
