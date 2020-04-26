@@ -1,39 +1,49 @@
 use paho_mqtt as mqtt;
+use std::error::Error;
+use std::sync::mpsc;
 use std::time::Duration;
 use std::{process, thread};
 mod variables;
 
-fn main() {
-    //                       _         _   _                 _ _            _
-    //    ___ _ __ ___  __ _| |_ ___  | |_| |__   ___    ___| (_) ___ _ __ | |_
-    //   / __| '__/ _ \/ _` | __/ _ \ | __| '_ \ / _ \  / __| | |/ _ \ '_ \| __|
-    //  | (__| | |  __/ (_| | ||  __/ | |_| | | |  __/ | (__| | |  __/ | | | |_
-    //   \___|_|  \___|\__,_|\__\___|  \__|_| |_|\___|  \___|_|_|\___|_| |_|\__|
-    //
-    let host: String = variables::HOST.to_string();
-
-    let create_options = mqtt::CreateOptionsBuilder::new()
-        .server_uri(&host)
-        .client_id("sync_ping")
-        .finalize();
-
-    let mut client = match mqtt::Client::new(create_options) {
-        Ok(client) => client,
-        Err(error) => panic!("error creating the client: {:?}", error),
-    };
-
+fn main() -> Result<(), Box<dyn Error>> {
     println!("I am the synchronous ping program.");
-   
+    let mut client = new_client(HOST)?;
 
-    //                                   _
-    //    ___ ___  _ __  _ __   ___  ___| |_
-    //   / __/ _ \| '_ \| '_ \ / _ \/ __| __|
-    //  | (_| (_) | | | | | | |  __/ (__| |_
-    //   \___\___/|_| |_|_| |_|\___|\___|\__|
     // initialize the consumer before connecting. This puts received messages
     // in a mpsc queue (multiple producer single consumer)
     let mpsc_consumer = client.start_consuming();
 
+    establish_connection(&client)?;
+
+    publish_ping(&client)?;
+    listen_to_the_pong(&client, &mpsc_consumer)?;
+    client.disconnect(None)?;
+    Ok(())
+}
+
+const HOST: &str = "test.mosquitto.org:1883";
+
+fn new_client(host: &str) -> mqtt::errors::MqttResult<mqtt::Client> {
+    let create_options = mqtt::CreateOptionsBuilder::new()
+        .server_uri(host)
+        .client_id("sync_ping")
+        .finalize();
+    let client = mqtt::Client::new(create_options)?;
+    Ok(client)
+}
+
+fn publish_ping(client: &mqtt::Client) -> mqtt::errors::MqttResult<()> {
+    let ping_message = mqtt::MessageBuilder::new()
+        .topic("ping-ask")
+        .payload("ping")
+        .qos(2)
+        .finalize();
+
+    println!("Sending the ping.");
+    client.publish(ping_message)
+}
+
+fn establish_connection(client: &mqtt::Client) -> mqtt::errors::MqttResult<()> {
     let last_will_and_testament = mqtt::MessageBuilder::new()
         .topic("pong-response")
         .payload("the synchronized pinger lost connection")
@@ -45,67 +55,44 @@ fn main() {
         .will_message(last_will_and_testament)
         .finalize();
 
-    println!("Connecting to the broker '{}'", &host);
+    println!("Connecting to the broker '{}'", HOST);
 
-    // initiate and check the connection
     match client.connect(connection_options) {
-        Ok(response) => {
-            let (server_uri, ver, session_present) = response;
+        Ok((server_uri, ver, session_present)) => {
             println!("Connected to '{}' with MQTT version {}", server_uri, ver);
             if !session_present {
                 println!("Subscribing to topic 'pong-response' with QoS 2",);
 
                 match client.subscribe(&"pong-response", 2) {
-                    Ok(qos) => println!("QoS granted: {:?}", qos),
+                    Ok(qos) => Ok(println!("QoS granted: {:?}", qos)),
                     Err(error) => {
                         println!("Error subscribing to topics: {}", error);
-                        client.disconnect(None).unwrap();
-                        process::exit(1);
+                        client.disconnect(None)?;
+                        Err(error)
                     }
                 }
             } else {
-                println!("We already have a session present!");
+                return Ok(println!("We already have a session present!"));
             }
         }
         Err(error) => {
-            println!("error connecting to {}: {:?}", &host, error);
+            println!("error connecting to {}: {:?}", HOST, error);
             process::exit(1);
         }
     }
-    //         _             _
-    //   _ __ (_)_ __   __ _(_)_ __   __ _
-    //  | '_ \| | '_ \ / _` | | '_ \ / _` |
-    //  | |_) | | | | | (_| | | | | | (_| |
-    //  | .__/|_|_| |_|\__, |_|_| |_|\__, |
-    //  |_|            |___/         |___/
-    let msg = mqtt::MessageBuilder::new()
-        .topic("ping-ask")
-        .payload("ping")
-        .qos(2)
-        .finalize();
+}
 
-    match client.publish(msg) {
-        Ok(()) => println!("Pinging successful!"),
-        Err(error) => panic!("The pinging failed : {}", error),
-    }
-    //   _ _     _             _
-    //  | (_)___| |_ ___ _ __ (_)_ __   __ _
-    //  | | / __| __/ _ \ '_ \| | '_ \ / _` |
-    //  | | \__ \ ||  __/ | | | | | | | (_| |
-    //  |_|_|___/\__\___|_| |_|_|_| |_|\__, |
-    //                                 |___/
-    println!("Waiting for the pong...");
-    // this consumes the mpsc queue
+fn listen_to_the_pong(
+    client: &mqtt::Client,
+    mpsc_consumer: &mpsc::Receiver<Option<mqtt::Message>>,
+) -> Result<(), Box<dyn Error>> {
+    println!("Waiting for the pong, consuming the mpsc queue...");
     for wrapped_message in mpsc_consumer.iter() {
         let message = wrapped_message.unwrap();
-        let payload_string: &str = match std::str::from_utf8(message.payload()) {
-            Ok(str) => str,
-            Err(error) => panic!("Couldn't unpack the message payload: {}", error),
-        };
-        println!("{}", payload_string);
+        let payload_string: &str = std::str::from_utf8(message.payload())?;
         match payload_string {
-            "pong" => println!("We received the pong!"),
-            _ => println!("That wasn't a pong..."),
+            "pong" => println!("{}\nWe received the pong!", payload_string),
+            _ => println!("{}That wasn't a pong...", payload_string),
         }
         if !client.is_connected() {
             println!("Connection lost. Waiting to reestablish the connection");
@@ -120,5 +107,5 @@ fn main() {
             break;
         }
     }
-    client.disconnect(None).unwrap();
+    Ok(())
 }

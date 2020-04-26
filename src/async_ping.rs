@@ -45,11 +45,8 @@ fn main() {
         .finalize();
 
     println!("connecting to the broker {}", &host);
-    client.connect_with_callbacks(connect_options, connect_success_cb, connect_failure_cb);
+    client.connect_with_callbacks(connect_options, connect_success_cb, connect_failure_cb).wait();
 
-    // wait for a few seconds before pinging, because I'm a noob
-    // todo: handle this more gracefully, asynchronously
-    thread::sleep(Duration::from_secs(3));
 
     //         _             _
     //   _ __ (_)_ __   __ _(_)_ __   __ _
