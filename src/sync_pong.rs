@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     if client.is_connected() {
         unsubscribe_and_disconnect(&client)?;
     }
-    println!("Exiting");
+    
     Ok(())
 }
 

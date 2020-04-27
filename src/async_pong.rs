@@ -1,38 +1,45 @@
 use paho_mqtt as mqtt;
+use std::error::Error;
 use std::thread;
+
 use std::time::Duration;
 mod variables;
 use futures::Future;
 
-fn main() {
-    //                       _         _   _                 _ _            _
-    //    ___ _ __ ___  __ _| |_ ___  | |_| |__   ___    ___| (_) ___ _ __ | |_
-    //   / __| '__/ _ \/ _` | __/ _ \ | __| '_ \ / _ \  / __| | |/ _ \ '_ \| __|
-    //  | (__| | |  __/ (_| | ||  __/ | |_| | | |  __/ | (__| | |  __/ | | | |_
-    //   \___|_|  \___|\__,_|\__\___|  \__|_| |_|\___|  \___|_|_|\___|_| |_|\__|
-    //
-    let host: String = variables::HOST.to_string();
+const HOST: &str = "test.mosquitto.org:1883";
+const SUBSCRIBED_TOPICS: &[&str] = &["test", "ping-ask"];
+const QUALITIES_OF_SERVICE: &[i32; 2] = &[2, 2];
 
-    let create_options = mqtt::CreateOptionsBuilder::new()
-        .server_uri(&host)
-        .client_id("sync_pong")
-        .finalize();
-
-    let mut client = match mqtt::AsyncClient::new(create_options) {
-        Ok(client) => client,
-        Err(error) => panic!("error creating the client: {:?}", error),
-    };
+fn main() -> Result<(), Box<dyn Error>> {
+    println!("Creating an asynchronous mqtt client...");
+    let mut client = new_client(HOST)?;
 
     client.set_connection_lost_callback(initiate_reconnection);
 
     client.set_message_callback(handle_messages);
 
-    //                                   _
-    //    ___ ___  _ __  _ __   ___  ___| |_
-    //   / __/ _ \| '_ \| '_ \ / _ \/ __| __|
-    //  | (_| (_) | | | | | | |  __/ (__| |_
-    //   \___\___/|_| |_|_| |_|\___|\___|\__|
+    println!("connecting to the broker {}", HOST);
+    let connect_options = create_connecting_options();
 
+    client.connect_with_callbacks(connect_options, connect_success_cb, connect_failure_cb);
+
+    // wait for incoming messages
+    loop {
+        thread::sleep(Duration::from_millis(1000));
+    }
+}
+
+fn new_client(host: &str) -> mqtt::errors::MqttResult<mqtt::AsyncClient> {
+    let create_options = mqtt::CreateOptionsBuilder::new()
+        .server_uri(host)
+        .client_id("async_pong")
+        .persistence(mqtt::PersistenceType::None)
+        .finalize();
+
+    mqtt::AsyncClient::new(create_options)
+}
+
+fn create_connecting_options() -> mqtt::ConnectOptions {
     let last_will_and_testament = mqtt::MessageBuilder::new()
         .topic("pong-response")
         .payload("the asynchronized ponger lost connection")
@@ -44,14 +51,7 @@ fn main() {
         .will_message(last_will_and_testament)
         .clean_session(true)
         .finalize();
-
-    println!("connecting to the broker {}", &host);
-    client.connect_with_callbacks(connect_options, connect_success_cb, connect_failure_cb);
-
-    // wait for incoming messages
-    loop {
-        thread::sleep(Duration::from_millis(1000));
-    }
+    connect_options
 }
 
 //             _ _ _                _
@@ -59,9 +59,6 @@ fn main() {
 //   / __/ _` | | | '_ \ / _` |/ __| |/ / __|
 //  | (_| (_| | | | |_) | (_| | (__|   <\__ \
 //   \___\__,_|_|_|_.__/ \__,_|\___|_|\_\___/
-
-const SUBSCRIBED_TOPICS: &[&str] = &["test", "ping-ask"];
-const QUALITIES_OF_SERVICE: &[i32; 2] = &[2, 2];
 
 fn initiate_reconnection(client: &mqtt::AsyncClient) {
     println!("Connection lost. Attempting to reconnect");
@@ -98,19 +95,26 @@ fn handle_messages(client: &mqtt::AsyncClient, wrapped_message: Option<mqtt::Mes
             match payload_string {
                 "ping" => {
                     println!("{}\nWe received a ping! Let's pong back!", payload_string);
-                    // publish_pong(client);
-                    let pong_message = mqtt::MessageBuilder::new()
-                        .topic("pong-response")
-                        .payload("pong")
-                        .qos(2)
-                        .finalize();
-
-                    // todo: handle the delivery token returned by this publish function
-                    client.publish(pong_message);
+                    publish_pong(client, "pong-response", "pong").unwrap();
                 }
                 _ => println!("{}\nThat wasn't a ping...", payload_string),
             }
         }
         None => println!("Well.... nothing"),
     }
+}
+
+fn publish_pong(
+    client: &mqtt::AsyncClient,
+    topic: &str,
+    message: &str,
+) -> mqtt::errors::MqttResult<()> {
+    let ping_message = mqtt::MessageBuilder::new()
+        .topic(topic)
+        .payload(message)
+        .qos(2)
+        .finalize();
+
+    println!("ponging");
+    client.publish(ping_message).wait()
 }
