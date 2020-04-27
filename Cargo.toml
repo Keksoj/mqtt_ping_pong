@@ -20,10 +20,6 @@ name = "async_ping"
 path = "src/async_pong.rs"
 name = "async_pong"
 
-[[bin]]
-path = "src/futures_ping.rs"
-name = "futures_ping"
-
 [dependencies]
 paho-mqtt = "0.6.0"
 futures = "0.1" # The newer version 0.3.4 doesn't have the wait() method
