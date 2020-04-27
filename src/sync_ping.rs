@@ -5,8 +5,12 @@ use std::time::Duration;
 use std::{process, thread};
 mod variables;
 
+const HOST: &str = "test.mosquitto.org:1883";
+const SUBSCRIBED_TOPIC: &str = "pong-response";
+const QUALITY_OF_SERVICE: i32 = 2;
+
 fn main() -> Result<(), Box<dyn Error>> {
-    println!("I am the synchronous ping program.");
+    println!("Creating a synchronous mqtt client...");
     let mut client = new_client(HOST)?;
 
     // initialize the consumer before connecting. This puts received messages
@@ -16,12 +20,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     establish_connection(&client)?;
 
     publish_ping(&client)?;
+
     listen_to_the_pong(&client, &mpsc_consumer)?;
+
     client.disconnect(None)?;
     Ok(())
 }
-
-const HOST: &str = "test.mosquitto.org:1883";
 
 fn new_client(host: &str) -> mqtt::errors::MqttResult<mqtt::Client> {
     let create_options = mqtt::CreateOptionsBuilder::new()
@@ -32,20 +36,9 @@ fn new_client(host: &str) -> mqtt::errors::MqttResult<mqtt::Client> {
     Ok(client)
 }
 
-fn publish_ping(client: &mqtt::Client) -> mqtt::errors::MqttResult<()> {
-    let ping_message = mqtt::MessageBuilder::new()
-        .topic("ping-ask")
-        .payload("ping")
-        .qos(2)
-        .finalize();
-
-    println!("Sending the ping.");
-    client.publish(ping_message)
-}
-
 fn establish_connection(client: &mqtt::Client) -> mqtt::errors::MqttResult<()> {
     let last_will_and_testament = mqtt::MessageBuilder::new()
-        .topic("pong-response")
+        .topic(SUBSCRIBED_TOPIC)
         .payload("the synchronized pinger lost connection")
         .finalize();
 
@@ -61,9 +54,12 @@ fn establish_connection(client: &mqtt::Client) -> mqtt::errors::MqttResult<()> {
         Ok((server_uri, ver, session_present)) => {
             println!("Connected to '{}' with MQTT version {}", server_uri, ver);
             if !session_present {
-                println!("Subscribing to topic 'pong-response' with QoS 2",);
+                println!(
+                    "Subscribing to topic 'pong-response' with QoS {}",
+                    &QUALITY_OF_SERVICE
+                );
 
-                match client.subscribe(&"pong-response", 2) {
+                match client.subscribe(&SUBSCRIBED_TOPIC, QUALITY_OF_SERVICE) {
                     Ok(qos) => Ok(println!("QoS granted: {:?}", qos)),
                     Err(error) => {
                         println!("Error subscribing to topics: {}", error);
@@ -80,6 +76,17 @@ fn establish_connection(client: &mqtt::Client) -> mqtt::errors::MqttResult<()> {
             process::exit(1);
         }
     }
+}
+
+fn publish_ping(client: &mqtt::Client) -> mqtt::errors::MqttResult<()> {
+    let ping_message = mqtt::MessageBuilder::new()
+        .topic("ping-ask")
+        .payload("ping")
+        .qos(2)
+        .finalize();
+
+    println!("Sending the ping.");
+    client.publish(ping_message)
 }
 
 fn listen_to_the_pong(

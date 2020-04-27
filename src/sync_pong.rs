@@ -1,36 +1,41 @@
 use paho_mqtt as mqtt;
+use std::error::Error;
+use std::sync::mpsc;
 use std::time::Duration;
 use std::{process, thread};
 mod variables;
 
-fn main() {
-    //                       _         _   _                 _ _            _
-    //    ___ _ __ ___  __ _| |_ ___  | |_| |__   ___    ___| (_) ___ _ __ | |_
-    //   / __| '__/ _ \/ _` | __/ _ \ | __| '_ \ / _ \  / __| | |/ _ \ '_ \| __|
-    //  | (__| | |  __/ (_| | ||  __/ | |_| | | |  __/ | (__| | |  __/ | | | |_
-    //   \___|_|  \___|\__,_|\__\___|  \__|_| |_|\___|  \___|_|_|\___|_| |_|\__|
-    //
-    let host: String = variables::HOST.to_string();
+const HOST: &str = "test.mosquitto.org:1883";
+const SUBSCRIBED_TOPICS: [&str; 2] = ["test", "ping-ask"];
+const QUALITIES_OF_SERVICE: [i32; 2] = [2, 2];
 
-    let create_options = mqtt::CreateOptionsBuilder::new()
-        .server_uri(&host)
-        .client_id("sync_pong")
-        .finalize();
+fn main() -> Result<(), Box<dyn Error>> {
+    println!("Creating a synchronous mqtt client...");
+    let mut client = new_client(HOST)?;
 
-    let mut client = match mqtt::Client::new(create_options) {
-        Ok(client) => client,
-        Err(error) => panic!("error creating the client: {:?}", error),
-    };
-    println!("I am the synchronous pong program.");
-    //                                   _
-    //    ___ ___  _ __  _ __   ___  ___| |_
-    //   / __/ _ \| '_ \| '_ \ / _ \/ __| __|
-    //  | (_| (_) | | | | | | |  __/ (__| |_
-    //   \___\___/|_| |_|_| |_|\___|\___|\__|
     // initialize the consumer before connecting. This puts received messages
     // in a mpsc queue (multiple producer single consumer)
     let mpsc_consumer = client.start_consuming();
 
+    establish_connection(&client)?;
+    listen_to_the_ping(&client, &mpsc_consumer)?;
+    if client.is_connected() {
+        unsubscribe_and_disconnect(&client)?;
+    }
+    println!("Exiting");
+    Ok(())
+}
+
+fn new_client(host: &str) -> mqtt::errors::MqttResult<mqtt::Client> {
+    let create_options = mqtt::CreateOptionsBuilder::new()
+        .server_uri(host)
+        .client_id("sync_pong")
+        .finalize();
+    let client = mqtt::Client::new(create_options)?;
+    Ok(client)
+}
+
+fn establish_connection(client: &mqtt::Client) -> mqtt::errors::MqttResult<()> {
     let last_will_and_testament = mqtt::MessageBuilder::new()
         .topic("ping-ask")
         .payload("the synchronized ponger lost connection")
@@ -42,69 +47,50 @@ fn main() {
         .will_message(last_will_and_testament)
         .finalize();
 
-    let subscribed_topics = ["test", "ping-ask"];
-    let qualities_of_service: [i32; 2] = [2, 2];
+    println!("Connecting to the broker '{}'", HOST);
 
-    println!("Connecting to the broker '{}'", &host);
-
-    // initiate and check the connection
     match client.connect(connection_options) {
-        Ok(response) => {
-            let (server_uri, ver, session_present) = response;
+        Ok((server_uri, ver, session_present)) => {
             println!("Connected to '{}' with MQTT version {}", server_uri, ver);
             if !session_present {
                 println!(
                     "Subscribing to the topics {:?} with QoS {:?}...",
-                    &subscribed_topics, &qualities_of_service
+                    &SUBSCRIBED_TOPICS, &QUALITIES_OF_SERVICE
                 );
 
-                match client.subscribe_many(&subscribed_topics, &qualities_of_service) {
-                    Ok(qos) => println!("QoS granted: {:?}", qos),
+                match client.subscribe_many(&SUBSCRIBED_TOPICS, &QUALITIES_OF_SERVICE) {
+                    Ok(qos) => Ok(println!("QoS granted: {:?}", qos)),
                     Err(error) => {
                         println!("Error subscribing to topics: {}", error);
-                        client.disconnect(None).unwrap();
+                        client.disconnect(None)?;
                         process::exit(1);
                     }
                 }
             } else {
-                println!("We already have a session present!");
+                return Ok(println!("We already have a session present!"));
             }
         }
         Err(error) => {
-            println!("error connecting to {}: {:?}", &host, error);
+            println!("error connecting to {}: {:?}", HOST, error);
             process::exit(1);
         }
     }
-    //                           _
-    //   _ __   ___  _ __   __ _(_)_ __   __ _
-    //  | '_ \ / _ \| '_ \ / _` | | '_ \ / _` |
-    //  | |_) | (_) | | | | (_| | | | | | (_| |
-    //  | .__/ \___/|_| |_|\__, |_|_| |_|\__, |
-    //  |_|                |___/         |___/
-    println!("Waiting for messages...");
-    // this consumes the mpsc queue
+}
+
+fn listen_to_the_ping(
+    client: &mqtt::Client,
+    mpsc_consumer: &mpsc::Receiver<Option<mqtt::Message>>,
+) -> Result<(), Box<dyn Error>> {
+    println!("Waiting for the ping, consuming the mpsc queue...");
     for wrapped_message in mpsc_consumer.iter() {
         let message = wrapped_message.unwrap();
-        let payload_string: &str = match std::str::from_utf8(message.payload()) {
-            Ok(str) => str,
-            Err(error) => panic!("Couldn't unpack the message payload: {}", error),
-        };
-        println!("{}", payload_string);
+        let payload_string: &str = std::str::from_utf8(message.payload())?;
         match payload_string {
             "ping" => {
-                println!("We got a ping message! Let's pong back.");
-                let pong_message = mqtt::MessageBuilder::new()
-                    .topic("pong-response")
-                    .payload("pong")
-                    .qos(2)
-                    .finalize();
-
-                match client.publish(pong_message) {
-                    Ok(()) => println!("successfully ponged!"),
-                    Err(error) => println!("Error while ponging: {:?}", error),
-                }
+                println!("{}\nWe received the ping!", payload_string);
+                publish_pong(client)?;
             }
-            _ => println!("That wasn't a ping message..."),
+            _ => println!("{}\nThat wasn't a pong...", payload_string),
         }
         if !client.is_connected() {
             println!("Connection lost. Waiting to reestablish the connection");
@@ -119,15 +105,22 @@ fn main() {
             break;
         }
     }
-    //       _ _                                     _
-    //    __| (_)___  ___ ___  _ __  _ __   ___  ___| |_
-    //   / _` | / __|/ __/ _ \| '_ \| '_ \ / _ \/ __| __|
-    //  | (_| | \__ \ (_| (_) | | | | | | |  __/ (__| |_
-    //   \__,_|_|___/\___\___/|_| |_|_| |_|\___|\___|\__|
-    if client.is_connected() {
-        println!("Disconnecting");
-        client.unsubscribe_many(&subscribed_topics).unwrap();
-        client.disconnect(None).unwrap();
-    }
-    println!("Exiting");
+    Ok(())
+}
+
+fn publish_pong(client: &mqtt::Client) -> mqtt::errors::MqttResult<()> {
+    let pong_message = mqtt::MessageBuilder::new()
+        .topic("pong-response")
+        .payload("pong")
+        .qos(2)
+        .finalize();
+
+    println!("Ponging back.");
+    client.publish(pong_message)
+}
+
+fn unsubscribe_and_disconnect(client: &mqtt::Client) -> mqtt::errors::MqttResult<()> {
+    println!("Disconnecting");
+    client.unsubscribe_many(&SUBSCRIBED_TOPICS)?;
+    client.disconnect(None)
 }
