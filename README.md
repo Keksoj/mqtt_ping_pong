@@ -54,7 +54,7 @@ cargo run --bin sync_ping
 Be sure to launch `sync_pong` first, otherwise it won't catch the single message that
 `sync_ping` sends immediatly when starting.
 
-## Run the synchronous ping-pong
+## Run the asynchronous ping-pong
 
 Same with
 

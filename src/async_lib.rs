@@ -1,7 +1,7 @@
 use futures::future::Future;
 use paho_mqtt as mqtt;
 use std::error::Error;
-use std::thread;
+use std::sync::mpsc;
 use std::time::Duration;
 
 pub struct AsyncMqttClientBuilder {
@@ -60,103 +60,107 @@ impl AsyncMqttClientBuilder {
             .server_uri(&self.host)
             .client_id(&self.client_id)
             .finalize();
-        // let client = mqtt::AsyncClient::new(create_options)?;
-        
+        let mut client = mqtt::AsyncClient::new(create_options)?;
+
+        let mpsc_consuming_queue = mqtt::AsyncClient::start_consuming(&mut client);
+
+        println!("Oh hi Mark");
+
         let sync_mqtt_client = AsyncMqttClient {
-            client: mqtt::AsyncClient::new(create_options)?,
-            // host: self.host,
+            client,
+            mpsc_consuming_queue,
+            host: self.host,
             sub_topic: self.sub_topic,
-            // pub_topic: self.pub_topic,
+            pub_topic: self.pub_topic,
             quality_of_service: self.quality_of_service,
-            // client_id: self.client_id,
-            // clean_session: self.clean_session,
-            // last_will_and_testament: self.last_will_and_testament,
+            client_id: self.client_id,
+            clean_session: self.clean_session,
+            last_will_and_testament: self.last_will_and_testament,
         };
 
         Ok(sync_mqtt_client)
     }
 }
+
 pub struct AsyncMqttClient {
     pub client: mqtt::AsyncClient,
+    pub host: String,
     pub sub_topic: String,
+    pub pub_topic: String,
     pub quality_of_service: i32,
-    // todo: 
-    // pub connection_lost_cb: FnMut(&AsyncClient) + 'static,
-    // pub handle_messages_callback: FnMut(&AsyncClient, Option<Message>) + 'static,
-    // etc.
+    pub client_id: String,
+    pub clean_session: bool,
+    pub last_will_and_testament: String,
+    pub mpsc_consuming_queue: mpsc::Receiver<Option<mqtt::Message>>,
 }
 
 impl AsyncMqttClient {
-    pub fn new(host: &str) -> mqtt::errors::MqttResult<Self> {
-        let create_options = mqtt::CreateOptionsBuilder::new()
-            .server_uri(host)
-            .client_id("async_pong")
-            .persistence(mqtt::PersistenceType::None)
+    pub fn connect(&self) -> Result<(), Box<dyn Error>> {
+        let last_will_and_testament = mqtt::MessageBuilder::new()
+            .topic(String::from(&self.sub_topic))
+            .payload(self.last_will_and_testament.clone())
             .finalize();
-        let async_mqtt_client = AsyncMqttClient {
-            client: mqtt::AsyncClient::new(create_options)?,
-            sub_topic: String::from("ping_ask"),
-            quality_of_service: 2,
-        };
-        Ok(async_mqtt_client)
+
+        let connect_options = mqtt::ConnectOptionsBuilder::new()
+            .keep_alive_interval(Duration::from_secs(20))
+            .mqtt_version(mqtt::MQTT_VERSION_3_1_1)
+            .will_message(last_will_and_testament)
+            .clean_session(self.clean_session)
+            .finalize();
+        let connect_token = self.client.connect(connect_options).wait()?;
+        println!("Connected with this token: {:?}", connect_token);
+        Ok(())
+    }
+    pub fn subscribe(&self) -> Result<(), Box<dyn Error>> {
+        let token = self
+            .client
+            .subscribe(self.sub_topic.clone(), self.quality_of_service)
+            .wait()?;
+        println!("Subscribed with this token: {:?}", token);
+        Ok(())
     }
 
-    // fn initiate_reconnection(&mut self) {
-    //     println!("Connection lost. Attempting to reconnect");
-    //     thread::sleep(Duration::from_millis(2500));
-    //     self.client
-    //         .reconnect_with_callbacks(Self::connect_success_cb, Self::connect_failure_cb);
-    // }
+    pub fn disconnect(&self) -> Result<(), Box<dyn Error>> {
+        let disconnect_token = self.client.disconnect(None).wait()?;
+        println!("Disonnected with this token: {:?}", disconnect_token);
+        Ok(())
+    }
 
-    // fn connect_success_cb(client: &mut Self.client, _message_id: u16) {
-    //     println!("Connection succeeded");
-    //     // subscribe to the desired topics
-    //     client
-    //         .subscribe(self.sub_topic, self.quality_of_service);
-    //     println!("Subscribing to topics: {}", self.sub_topic);
-    // }
+    pub fn reconnect(&self) -> Result<(), Box<dyn Error>> {
+        let reconnect_token = self.client.reconnect().wait()?;
+        println!("Reconnected with this token: {:?}", reconnect_token);
+        Ok(())
+    }
 
-    // // this is a sleep & retry that calls itself recursively
-    // fn connect_failure_cb(client: &mut Self.client, _message_id: u16, return_code: i32) {
-    //     println!(
-    //         "Connection attempt failed with return code {}.\n",
-    //         return_code
-    //     );
-    //     thread::sleep(Duration::from_millis(2500));
-    //     client
-    //         .reconnect_with_callbacks(connect_success_cb, connect_failure_cb);
-    // }
+    pub fn is_connected(&self) -> bool {
+        self.client.is_connected()
+    }
+    pub fn reconnect_if_needed(&self) -> Result<(), Box<dyn Error>> {
+        if !self.is_connected() {
+            self.reconnect()?;
+            println!("Oops! We had to reconnect here.")
+        }
+        Ok(())
+    }
 
-    fn publish_pong(&self, topic: &str, message: &str) -> mqtt::errors::MqttResult<()> {
-        let ping_message = mqtt::MessageBuilder::new()
-            .topic(topic)
-            .payload(message)
-            .qos(2)
+    pub fn received(&self, str_to_check_for: &str) -> Result<bool, Box<dyn Error>> {
+        for wrapped_message in self.mpsc_consuming_queue.iter() {
+            let message = wrapped_message.unwrap();
+            let payload_string: &str = std::str::from_utf8(message.payload())?;
+            println!("we received: {}", payload_string);
+            let answer = str_to_check_for == payload_string;
+            return Ok(answer);
+        }
+        Ok(false)
+    }
+
+    pub fn publish(&self, content: &str) -> mqtt::errors::MqttResult<()> {
+        let built_message = mqtt::MessageBuilder::new()
+            .topic(&self.pub_topic)
+            .payload(content)
+            .qos(self.quality_of_service)
             .finalize();
-        println!("ponging");
-        self.client.publish(ping_message).wait()
+        println!("Publishing '{}'", &content);
+        self.client.publish(built_message).wait()
     }
 }
-
-// fn initiate_reconnection(client: &mqtt::AsyncClient) {
-//     println!("Connection lost. Attempting to reconnect");
-//     thread::sleep(Duration::from_millis(2500));
-//     client.reconnect_with_callbacks(connect_success_cb, connect_failure_cb);
-// }
-
-// fn connect_success_cb(client: &mqtt::AsyncClient, _message_id: u16) {
-//     println!("Connection succeeded");
-//     // subscribe to the desired topics
-//     client.subscribe_many(SUBSCRIBED_TOPICS, QUALITIES_OF_SERVICE);
-//     println!("Subscribing to topics: {:?}", SUBSCRIBED_TOPICS);
-// }
-
-// // this is a sleep & retry that calls itself recursively
-// fn connect_failure_cb(client: &mqtt::AsyncClient, _message_id: u16, return_code: i32) {
-//     println!(
-//         "Connection attempt failed with return code {}.\n",
-//         return_code
-//     );
-//     thread::sleep(Duration::from_millis(2500));
-//     client.reconnect_with_callbacks(connect_success_cb, connect_failure_cb);
-// }
