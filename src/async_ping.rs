@@ -1,7 +1,8 @@
 use futures::Future;
 use paho_mqtt as mqtt;
 use std::error::Error;
-
+mod async_lib;
+use async_lib::{AsyncMqttClient, AsyncMqttClientBuilder};
 mod variables;
 use std::thread;
 use std::time::Duration;
@@ -12,20 +13,30 @@ const TOPIC: &str = "pong-response";
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("Creating an asynchronous mqtt client...");
-    let mut client = new_client(HOST)?;
-    
+    let mut client = AsyncMqttClientBuilder::new_with_defaults()
+        .with_host("test.mosquitto.org:1883")
+        .with_client_id("async_ping")
+        .with_publishing_topic("ping-ask")
+        .with_subscribed_topic("pong-response")
+        .with_last_will_and_testament("the synchronised ponger lost the connection")
+        .with_quality_of_service(2)
+        .with_clean_session(true)
+        .build()?;
 
-    client.set_connection_lost_callback(initiate_reconnection);
+    client
+        .client
+        .set_connection_lost_callback(initiate_reconnection);
 
-    client.set_message_callback(handle_messages);
+    client.client.set_message_callback(handle_messages);
 
     println!("connecting to the broker {}", HOST);
     let connect_options = create_connecting_options(&TOPIC);
     client
+        .client
         .connect_with_callbacks(connect_options, connect_success_cb, connect_failure_cb)
         .wait()?;
 
-    publish_ping(&client, "ping-ask", "ping")?;
+    publish_ping(&client.client, "ping-ask", "ping")?;
 
     // wait for incoming messages
     loop {
@@ -33,16 +44,6 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
-
-fn new_client(host: &str) -> mqtt::errors::MqttResult<mqtt::AsyncClient> {
-    let create_options = mqtt::CreateOptionsBuilder::new()
-        .server_uri(host)
-        .client_id("async_ping")
-        .persistence(mqtt::PersistenceType::None)
-        .finalize();
-
-    mqtt::AsyncClient::new(create_options)
-}
 
 fn create_connecting_options(topic: &str) -> mqtt::ConnectOptions {
     let last_will_and_testament = mqtt::MessageBuilder::new()
@@ -111,5 +112,4 @@ fn handle_messages(_client: &mqtt::AsyncClient, wrapped_message: Option<mqtt::Me
         "pong" => println!("We received the pong!"),
         _ => println!("That wasn't a pong..."),
     }
-    
 }

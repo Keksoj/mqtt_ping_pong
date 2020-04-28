@@ -4,10 +4,9 @@ use sync_lib::{SyncMqttClient, SyncMqttClientBuilder};
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("Creating a synchronous mqtt client...");
-    
     let mut sync_mqtt_client = SyncMqttClientBuilder::new_with_defaults()
         .with_host("test.mosquitto.org:1883")
-        .with_client_id("Synchronised pinger")
+        .with_client_id("sync_ping")
         .with_publishing_topic("ping-ask")
         .with_subscribed_topic("pong-response")
         .with_last_will_and_testament("the synchronised pinger lost the connection")

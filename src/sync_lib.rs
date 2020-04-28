@@ -146,7 +146,7 @@ impl SyncMqttClient {
             .finalize();
 
         self.client.publish(built_message)?;
-        println!("We published the {}!", content);
+        println!("We published the {}.", content);
         Ok(())
     }
 
@@ -165,7 +165,6 @@ impl SyncMqttClient {
     }
 
     pub fn received(&self, str_to_check_for: &str) -> Result<bool, Box<dyn Error>> {
-        println!("we are here");
         for wrapped_message in self.mpsc_consuming_queue.iter() {
             let message = wrapped_message.unwrap();
             let payload_string: &str = std::str::from_utf8(message.payload())?;
