@@ -1,9 +1,10 @@
 use paho_mqtt as mqtt;
 use std::error::Error;
 use std::thread;
-
+mod async_lib;
+use async_lib::AsyncMqttClient;
 use std::time::Duration;
-mod variables;
+
 use futures::Future;
 
 const HOST: &str = "test.mosquitto.org:1883";
@@ -12,16 +13,16 @@ const QUALITIES_OF_SERVICE: &[i32; 2] = &[2, 2];
 
 fn main() -> Result<(), Box<dyn Error>> {
     println!("Creating an asynchronous mqtt client...");
-    let mut client = new_client(HOST)?;
+    let mut client = AsyncMqttClient::new(HOST)?;
 
-    client.set_connection_lost_callback(initiate_reconnection);
+    client.client.set_connection_lost_callback(initiate_reconnection);
 
-    client.set_message_callback(handle_messages);
+    client.client.set_message_callback(handle_messages);
 
     println!("connecting to the broker {}", HOST);
     let connect_options = create_connecting_options();
 
-    client.connect_with_callbacks(connect_options, connect_success_cb, connect_failure_cb);
+    client.client.connect_with_callbacks(connect_options, connect_success_cb, connect_failure_cb);
 
     // wait for incoming messages
     loop {
@@ -29,15 +30,15 @@ fn main() -> Result<(), Box<dyn Error>> {
     }
 }
 
-fn new_client(host: &str) -> mqtt::errors::MqttResult<mqtt::AsyncClient> {
-    let create_options = mqtt::CreateOptionsBuilder::new()
-        .server_uri(host)
-        .client_id("async_pong")
-        .persistence(mqtt::PersistenceType::None)
-        .finalize();
+// fn new_client(host: &str) -> mqtt::errors::MqttResult<mqtt::AsyncClient> {
+//     let create_options = mqtt::CreateOptionsBuilder::new()
+//         .server_uri(host)
+//         .client_id("async_pong")
+//         .persistence(mqtt::PersistenceType::None)
+//         .finalize();
 
-    mqtt::AsyncClient::new(create_options)
-}
+//     mqtt::AsyncClient::new(create_options)
+// }
 
 fn create_connecting_options() -> mqtt::ConnectOptions {
     let last_will_and_testament = mqtt::MessageBuilder::new()
