@@ -43,7 +43,10 @@ impl AsyncMqttClientBuilder {
         self.pub_topic = pub_topic.to_string();
         self
     }
-    pub fn with_last_will_and_testament(mut self, last_will_and_testament: &str) -> Self {
+    pub fn with_last_will_and_testament(
+        mut self,
+        last_will_and_testament: &str,
+    ) -> Self {
         self.last_will_and_testament = last_will_and_testament.to_string();
         self
     }
@@ -62,7 +65,8 @@ impl AsyncMqttClientBuilder {
             .finalize();
         let mut client = mqtt::AsyncClient::new(create_options)?;
 
-        let mpsc_consuming_queue = mqtt::AsyncClient::start_consuming(&mut client);
+        let mpsc_consuming_queue =
+            mqtt::AsyncClient::start_consuming(&mut client);
 
         println!("Oh hi Mark");
 
@@ -143,7 +147,10 @@ impl AsyncMqttClient {
         Ok(())
     }
 
-    pub fn received(&self, str_to_check_for: &str) -> Result<bool, Box<dyn Error>> {
+    pub fn received(
+        &self,
+        str_to_check_for: &str,
+    ) -> Result<bool, Box<dyn Error>> {
         for wrapped_message in self.mpsc_consuming_queue.iter() {
             let message = wrapped_message.unwrap();
             let payload_string: &str = std::str::from_utf8(message.payload())?;
@@ -162,5 +169,27 @@ impl AsyncMqttClient {
             .finalize();
         println!("Publishing '{}'", &content);
         self.client.publish(built_message).wait()
+    }
+
+    pub fn set_message_callback<T: HandleMessage>(&self, user_written_callback: T)
+    {
+        self.client.set_message_callback(user_written_callback);
+    }
+}
+
+trait HandleMessage {
+    fn handle_message(
+        &self,
+        message: std::option::Option<mqtt::Message>,
+    ) -> Result<(), Box<dyn Error>>;
+}
+
+impl HandleMessage for AsyncMqttClient {
+    fn handle_message(
+        &self,
+        message: std::option::Option<mqtt::Message>,
+    ) -> Result<(), Box<dyn Error>> {
+        self.client.set_message_callback(user_written_callback);
+        Ok(())
     }
 }

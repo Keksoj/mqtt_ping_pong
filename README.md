@@ -69,8 +69,3 @@ cargo run --bin async_ping
 ```
 
 
-### Why the huge ASCII text as comments in the code?
-
-I don't know about you, but diving into six month old code is tedious,
-and this repository is meant as a learning exercise to be re-read for generations to come.  
-Plus, ASCII art is fancy.

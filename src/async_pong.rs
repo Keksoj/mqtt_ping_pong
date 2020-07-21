@@ -1,7 +1,9 @@
+use paho_mqtt as mqtt;
 use std::error::Error;
 use std::thread;
+
 mod async_lib;
-use async_lib::AsyncMqttClientBuilder;
+use async_lib::{AsyncMqttClient, AsyncMqttClientBuilder};
 use std::time::Duration;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -11,14 +13,18 @@ fn main() -> Result<(), Box<dyn Error>> {
         .with_client_id("Synchronised ponger")
         .with_publishing_topic("pong-response")
         .with_subscribed_topic("ping-ask")
-        .with_last_will_and_testament("the synchronised ponger lost the connection")
+        .with_last_will_and_testament(
+            "the synchronised ponger lost the connection",
+        )
         .with_quality_of_service(2)
         .with_clean_session(true)
         .build()?;
 
-    // be sure to connect BEFORE subscribing
     async_mqtt_client.connect()?;
     async_mqtt_client.subscribe()?;
+
+    // this would be rad:
+    async_mqtt_client.set_message_callback(user_written_callback);
 
     loop {
         async_mqtt_client.reconnect_if_needed()?;
@@ -31,4 +37,17 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
         thread::sleep(Duration::from_millis(200));
     }
+}
+
+// What I'd like would be to enable this
+fn user_written_callback(
+    async_mqtt_client: &AsyncMqttClient,
+    message: Option<mqtt::Message>,
+) -> Result<(), Box<dyn Error>> {
+    let message = message.unwrap();
+    let content: &str = std::str::from_utf8(message.payload())?;
+    println!("That message is lit: {}", content);
+    println!("let's republish it.");
+    async_mqtt_client.publish(content)?;
+    Ok(())
 }
